@@ -35,15 +35,18 @@ git push -u origin main
 
 ### 第 3 步：开启 GitHub Pages
 
+> **注意**：Actions 首次运行后会自动创建 `gh-pages` 分支，之后再配置 Pages。
+> 如果仓库刚创建，可先跳到第 4 步手动触发一次 Actions，再回来配置。
+
 1. 进入仓库 → **Settings** → **Pages**
 2. Source 选 **Deploy from a branch**
-3. Branch 选 **main**，目录选 **/(root)**
+3. Branch 选 **gh-pages**，目录选 **/(root)**
 4. 点 **Save**
 
 稍等 1-2 分钟，页面将在以下地址上线：
 
 ```
-https://【你的用户名】.github.io/laopu-intel/
+https://【你的用户名】.github.io/lp-longmao/
 ```
 
 ---
@@ -69,14 +72,15 @@ https://【你的用户名】.github.io/laopu-intel/
 ## 文件结构
 
 ```
-gold-dashboard/
-├── laopu-intel.html          # HTML 模板（含 {{占位符}}）
-├── generate_intel.py         # 数据抓取 + 页面生成脚本
-├── requirements.txt          # Python 依赖
-├── index.html                # 自动生成，不要手动编辑
-└── .github/
-    └── workflows/
-        └── update-intel.yml  # GitHub Actions 定时任务
+（仓库根目录）
+├── .github/
+│   └── workflows/
+│       └── update-intel.yml  # GitHub Actions 定时任务（必须在根目录）
+└── gold-dashboard/
+    ├── laopu-intel.html      # HTML 模板（含 {{占位符}}）
+    ├── generate_intel.py     # 数据抓取 + 页面生成脚本
+    ├── requirements.txt      # Python 依赖
+    └── index.html            # 自动生成，不要手动编辑
 ```
 
 ## 手动更新内容
