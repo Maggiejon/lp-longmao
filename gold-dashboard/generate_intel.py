@@ -422,16 +422,19 @@ def fetch_xiaohongshu(keyword: str = "老铺黄金", max_items: int = 10) -> lis
                         if not any(kw in combined for kw in ["老铺黄金", "老铺", "黄金", "古法金"]):
                             continue
 
+                        summary = smart_summary(title, 50)
                         items.append(_make_social_item(
-                            "xhs", title,
-                            f"作者：{author}" if author else "",
+                            "xhs", title, summary,
                             "小红书", link, None,
                             {"likes": likes} if likes else {},
                         ))
                     except Exception:
                         continue
 
-                print(f"  小红书：{len(items)} 条（过滤后）")
+                # 按热门（点赞数）降序排列，取 top6
+                items.sort(key=lambda x: parse_likes(x["stats"].get("likes", "")), reverse=True)
+                items = items[:6]
+                print(f"  小红书：{len(items)} 条（过滤+热门排序）")
                 return items
 
             finally:
@@ -483,12 +486,14 @@ def fetch_xhs_via_sogou(keyword: str = "老铺黄金 小红书", max_items: int 
             link    = a.get("href", "")
             if link.startswith("/link?"):
                 link = "https://www.sogou.com" + link
-            preview = snippet_el.get_text(strip=True) if snippet_el else ""
+            raw_preview = snippet_el.get_text(strip=True) if snippet_el else ""
             if not title:
                 continue
             # 过滤：标题或摘要必须包含「老铺黄金」
-            if "老铺黄金" not in title and "老铺黄金" not in preview:
+            if "老铺黄金" not in title and "老铺黄金" not in raw_preview:
                 continue
+            # 50 字以内精炼摘要；若搜索摘要为空则从标题提取
+            preview = smart_summary(raw_preview, 50) or smart_summary(title, 50)
             items.append(_make_social_item(
                 "xhs", title, preview, "小红书·搜狗索引", link, None
             ))
@@ -504,6 +509,52 @@ def fetch_xhs_via_sogou(keyword: str = "老铺黄金 小红书", max_items: int 
 # ════════════════════════════════════════════════════════════════════════════
 #  四、通用工具
 # ════════════════════════════════════════════════════════════════════════════
+
+def parse_likes(s: str) -> int:
+    """将 '8.9万' / '475' / '2.9万' 统一转为整数，用于热门排序"""
+    if not s:
+        return 0
+    s = s.strip().replace(",", "")
+    try:
+        if "万" in s:
+            return int(float(s.replace("万", "")) * 10000)
+        return int(s)
+    except ValueError:
+        return 0
+
+
+def smart_summary(text: str, max_len: int = 50) -> str:
+    """
+    从文章摘要/标题中提取不超过 max_len 个汉字的关键信息：
+    - 去除日期前缀（"6天前 -"、"2年前 -"、"2025年3月2日 -" 等）
+    - 去除尾部来源标签（"_品牌_市场"、"|腾讯新闻" 等）
+    - 尽量在句号/逗号处截断，保持语义完整
+    """
+    if not text:
+        return ""
+    text = text.strip()
+    # 去除时间前缀（支持 天/小时/分钟/月/年 前）
+    text = re.sub(r"^\d{4}年\d+月\d+日\s*[-·]\s*", "", text)
+    text = re.sub(r"^\d+\s*[天小时分钟月年]+前\s*[-·]\s*", "", text)
+    # 去除尾部所有 _xxx 或 |xxx 式来源/分类标签（可能有多个）
+    text = re.sub(r"[_|][^_|。！？，\n]+$", "", text)
+    text = re.sub(r"([_|][^_|。！？，\n]+)+$", "", text)
+    # 去除末尾 "-来源" 形式（如 "-今日头条"）
+    text = re.sub(r"\s*[-–—]\s*[\u4e00-\u9fa5a-zA-Z]{2,10}$", "", text)
+    # 去除省略号末尾
+    text = re.sub(r"\.{3,}$|…+$", "", text)
+    text = text.strip("_|… \t")
+    if not text:
+        return ""
+    if len(text) <= max_len:
+        return text
+    # 优先在标点处截断，保持句意完整（含英文逗号/句号）
+    for punct in ["。", "！", "？", "；", "，", "、", ",", "."]:
+        idx = text[:max_len].rfind(punct)
+        if idx > max_len // 3:
+            return text[: idx + 1]
+    return text[:max_len] + "…"
+
 
 def classify_text(text: str) -> str:
     t = text.lower()
