@@ -2,7 +2,7 @@ name: 每周更新老铺黄金情报页面
 
 on:
   schedule:
-    - cron: '0 10 * * 5'   # 每周五北京时间 18:00（UTC 10:00）
+    - cron: '0 23 * * 4'   # 每周五北京时间 07:00（UTC 周四 23:00）
   workflow_dispatch:         # 支持手动触发
 
 permissions:
