@@ -273,8 +273,15 @@ def fetch_sogou_weixin(keyword: str = "老铺黄金", max_items: int = 10) -> li
             if not title_el:
                 continue
             title   = title_el.get_text(strip=True)
-            link    = title_el.get("href", "")
-            preview = preview_el.get_text(strip=True) if preview_el else ""
+            raw_link = title_el.get("href", "")
+            # 搜狗微信链接为相对路径 /link?url=...，补全为绝对 URL
+            if raw_link.startswith("/link?"):
+                link = "https://weixin.sogou.com" + raw_link
+            elif raw_link.startswith("http"):
+                link = raw_link
+            else:
+                link = ""   # 无效链接直接丢弃
+            preview = smart_summary(preview_el.get_text(strip=True) if preview_el else "", 50)
             account = account_el.get_text(strip=True) if account_el else "微信公众号"
             pub_str = time_el.get_text(strip=True) if time_el else ""
             try:
@@ -483,9 +490,13 @@ def fetch_xhs_via_sogou(keyword: str = "老铺黄金 小红书", max_items: int 
             if not a:
                 continue
             title   = a.get_text(strip=True)
-            link    = a.get("href", "")
-            if link.startswith("/link?"):
-                link = "https://www.sogou.com" + link
+            raw_link = a.get("href", "")
+            if raw_link.startswith("/link?"):
+                link = "https://www.sogou.com" + raw_link
+            elif raw_link.startswith("http"):
+                link = raw_link
+            else:
+                continue   # ?user_ip=... 等无效链接直接跳过
             raw_preview = snippet_el.get_text(strip=True) if snippet_el else ""
             if not title:
                 continue
