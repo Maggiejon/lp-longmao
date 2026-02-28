@@ -464,7 +464,9 @@ def fetch_xhs_via_sogou(keyword: str = "老铺黄金 小红书", max_items: int 
         soup = BeautifulSoup(resp.text, "html.parser")
 
         items = []
-        for r in soup.select(".vrwrap")[:max_items]:
+        for r in soup.select(".vrwrap"):
+            if len(items) >= max_items:
+                break
             a = r.select_one("h3 a") or r.select_one("a[href]")
             snippet_el = r.select_one(".str_info") or r.select_one("p")
             if not a:
@@ -475,6 +477,9 @@ def fetch_xhs_via_sogou(keyword: str = "老铺黄金 小红书", max_items: int 
                 link = "https://www.sogou.com" + link
             preview = snippet_el.get_text(strip=True) if snippet_el else ""
             if not title:
+                continue
+            # 过滤：标题或摘要必须包含「老铺黄金」
+            if "老铺黄金" not in title and "老铺黄金" not in preview:
                 continue
             items.append(_make_social_item(
                 "xhs", title, preview, "小红书·搜狗索引", link, None
