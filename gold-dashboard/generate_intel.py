@@ -387,9 +387,12 @@ def fetch_xiaohongshu(keyword: str = "老铺黄金", max_items: int = 10) -> lis
                     print("  小红书：未找到笔记卡片（可能需要登录）")
                     return []
 
-                cards = page.query_selector_all(card_sel)[:max_items]
+                # 抓更多卡片，过滤后仍能保留足够数量
+                cards = page.query_selector_all(card_sel)[:max_items * 4]
                 items = []
                 for card in cards:
+                    if len(items) >= max_items:
+                        break
                     try:
                         title_el = (
                             card.query_selector("span.title")
@@ -414,6 +417,11 @@ def fetch_xiaohongshu(keyword: str = "老铺黄金", max_items: int = 10) -> lis
                                    or card.query_selector("[class*='like'] [class*='count']"))
                         likes = like_el.inner_text().strip() if like_el else ""
 
+                        # 关键词过滤：确保内容与老铺黄金相关
+                        combined = title + " " + author
+                        if not any(kw in combined for kw in ["老铺黄金", "老铺", "黄金", "古法金"]):
+                            continue
+
                         items.append(_make_social_item(
                             "xhs", title,
                             f"作者：{author}" if author else "",
@@ -423,7 +431,7 @@ def fetch_xiaohongshu(keyword: str = "老铺黄金", max_items: int = 10) -> lis
                     except Exception:
                         continue
 
-                print(f"  小红书：{len(items)} 条")
+                print(f"  小红书：{len(items)} 条（过滤后）")
                 return items
 
             finally:
