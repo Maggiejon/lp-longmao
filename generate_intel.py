@@ -293,89 +293,132 @@ def fetch_sogou_weixin(keyword: str = "老铺黄金", max_items: int = 10) -> li
         return []
 
 
-# ── 小红书（Playwright 无头浏览器）──────────────────────────────────────────
+# ── 小红书（Playwright + 弹窗关闭，GitHub Actions 专用）────────────────────
 
 def fetch_xiaohongshu(keyword: str = "老铺黄金", max_items: int = 10) -> list:
     """
-    小红书笔记搜索（Playwright 无头浏览器，需要 chromium 已安装）
-    - 无需登录，获取搜索结果前 ~10 条笔记
-    - 内容：买家测评 / 调价攻略 / 搭配种草
+    小红书笔记搜索（Playwright 无头浏览器）
+    策略：加载搜索页 → 强制关掉登录弹窗 → 提取已渲染的卡片
+    在 GitHub Actions（US IP）环境下可获取初始搜索结果。
+    本地中国 IP 受限时自动降级，返回空列表。
     """
     try:
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
         import urllib.parse
 
         search_url = (
             "https://www.xiaohongshu.com/search_result"
-            f"?keyword={urllib.parse.quote(keyword)}&type=51"
+            f"?keyword={urllib.parse.quote(keyword)}&type=51&source=web_search_result_notes"
         )
 
         with sync_playwright() as pw:
             browser = pw.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage",
-                      "--disable-blink-features=AutomationControlled"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-features=VizDisplayCompositor",
+                    "--lang=zh-CN",
+                ],
             )
             context = browser.new_context(
-                user_agent=HEADERS_BROWSER["User-Agent"],
-                viewport={"width": 390, "height": 844},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1280, "height": 900},
                 locale="zh-CN",
                 timezone_id="Asia/Shanghai",
                 extra_http_headers={"Accept-Language": "zh-CN,zh;q=0.9"},
             )
             # 屏蔽 webdriver 特征
-            context.add_init_script(
-                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-            )
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh']});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3]});
+                window.chrome = {runtime: {}};
+            """)
             page = context.new_page()
 
             try:
-                page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
-                # 等待笔记卡片出现（多种 selector 兼容）
-                for sel in ["section.note-item", "div.note-item", "[class*='NoteItem']",
-                            "[data-v-note]", ".search-feed-item"]:
+                page.goto(search_url, wait_until="domcontentloaded", timeout=25000)
+
+                # 等一会儿让内容加载
+                page.wait_for_timeout(3000)
+
+                # 关闭登录弹窗（多种 selector 兼容）
+                for close_sel in [
+                    ".login-container .close",
+                    "[class*='login'] [class*='close']",
+                    "[class*='modal'] [class*='close']",
+                    ".close-button",
+                    "button[aria-label='Close']",
+                    ".overlay .close",
+                    "[data-v-close]",
+                ]:
                     try:
-                        page.wait_for_selector(sel, timeout=6000)
-                        break
+                        btn = page.query_selector(close_sel)
+                        if btn and btn.is_visible():
+                            btn.click()
+                            page.wait_for_timeout(800)
+                            break
                     except Exception:
                         pass
 
-                # 解析笔记
-                items = []
-                # 尝试多种 selector 以适应 XHS 页面改版
-                cards = (page.query_selector_all("section.note-item")
-                         or page.query_selector_all("div[class*='NoteItem']")
-                         or page.query_selector_all(".search-feed-item"))
+                # 按 Escape 也能关掉部分弹窗
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(1000)
 
-                for card in cards[:max_items]:
+                # 等待笔记卡片
+                card_sel = None
+                for sel in ["section.note-item", "div.note-item",
+                            "[class*='NoteItem']", ".feeds-page .note-item",
+                            ".search-feed-item", "[data-note-id]"]:
                     try:
-                        # 标题
-                        title_el = (card.query_selector(".footer span.title")
-                                    or card.query_selector("a[href*='/explore/'] span")
-                                    or card.query_selector("span.title")
-                                    or card.query_selector(".note-title"))
+                        page.wait_for_selector(sel, timeout=5000)
+                        card_sel = sel
+                        break
+                    except PWTimeout:
+                        pass
+
+                if not card_sel:
+                    print("  小红书：未找到笔记卡片（可能需要登录）")
+                    return []
+
+                cards = page.query_selector_all(card_sel)[:max_items]
+                items = []
+                for card in cards:
+                    try:
+                        title_el = (
+                            card.query_selector("span.title")
+                            or card.query_selector(".footer span.title")
+                            or card.query_selector("[class*='title']")
+                        )
                         title = title_el.inner_text().strip() if title_el else ""
                         if not title:
                             continue
 
-                        # 链接
-                        link_el = card.query_selector("a[href*='/explore/']")
+                        link_el = (card.query_selector("a[href*='/explore/']")
+                                   or card.query_selector("a"))
                         raw_link = link_el.get_attribute("href") if link_el else ""
                         link = ("https://www.xiaohongshu.com" + raw_link
                                 if raw_link.startswith("/") else raw_link)
 
-                        # 作者
-                        author_el = card.query_selector(".author span") or card.query_selector(".nickname")
+                        author_el = (card.query_selector(".author span")
+                                     or card.query_selector(".nickname"))
                         author = author_el.inner_text().strip() if author_el else ""
 
-                        # 点赞数
-                        like_el = card.query_selector(".like-wrapper .count") or card.query_selector(".like-count")
+                        like_el = (card.query_selector(".like-wrapper .count")
+                                   or card.query_selector("[class*='like'] [class*='count']"))
                         likes = like_el.inner_text().strip() if like_el else ""
 
                         items.append(_make_social_item(
-                            "xhs", title, f"作者：{author}" if author else "",
+                            "xhs", title,
+                            f"作者：{author}" if author else "",
                             "小红书", link, None,
-                            {"likes": likes} if likes else {}
+                            {"likes": likes} if likes else {},
                         ))
                     except Exception:
                         continue
@@ -391,6 +434,57 @@ def fetch_xiaohongshu(keyword: str = "老铺黄金", max_items: int = 10) -> lis
         return []
     except Exception as e:
         print(f"  [WARN] 小红书：{e}")
+        return []
+
+
+# ── 小红书备用：搜狗搜索 XHS 相关内容 ─────────────────────────────────────
+
+def fetch_xhs_via_sogou(keyword: str = "老铺黄金 小红书", max_items: int = 6) -> list:
+    """
+    当 Playwright 抓不到 XHS 内容时的备用方案：
+    搜狗网页搜索 '老铺黄金 小红书'，返回提到小红书的文章
+    """
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        import urllib.parse
+
+        url = f"https://www.sogou.com/web?query={urllib.parse.quote(keyword)}&num=10"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Referer": "https://www.sogou.com/",
+        }
+        resp = requests.get(url, headers=headers, timeout=12)
+        resp.encoding = "utf-8"
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        items = []
+        for r in soup.select(".vrwrap")[:max_items]:
+            a = r.select_one("h3 a") or r.select_one("a[href]")
+            snippet_el = r.select_one(".str_info") or r.select_one("p")
+            if not a:
+                continue
+            title   = a.get_text(strip=True)
+            link    = a.get("href", "")
+            if link.startswith("/link?"):
+                link = "https://www.sogou.com" + link
+            preview = snippet_el.get_text(strip=True) if snippet_el else ""
+            if not title:
+                continue
+            items.append(_make_social_item(
+                "xhs", title, preview, "小红书·搜狗索引", link, None
+            ))
+
+        print(f"  小红书备用（搜狗）：{len(items)} 条")
+        return items
+
+    except Exception as e:
+        print(f"  [WARN] 小红书备用：{e}")
         return []
 
 
@@ -695,10 +789,14 @@ def main():
 
     # ── 3. 社媒动态 ──────────────────────────────────────────────────────────
     print("\n[3/4] 抓取社媒动态...")
+    xhs_items = fetch_xiaohongshu()
+    if not xhs_items:
+        print("  小红书 Playwright 未获取到内容，切换备用搜狗索引...")
+        xhs_items = fetch_xhs_via_sogou()
     social = merge_dedupe([
         fetch_weibo(),
         fetch_sogou_weixin(),
-        fetch_xiaohongshu(),
+        xhs_items,
     ])
     by_platform = {p: sum(1 for s in social if s["platform"] == p)
                    for p in ("xhs", "weibo", "weixin")}
